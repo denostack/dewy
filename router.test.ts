@@ -1,5 +1,4 @@
-import { assertEquals, assertInstanceOf, fail } from "testing/asserts.ts";
-import { ServerError } from "./error/server_error.ts";
+import { assertEquals } from "testing/asserts.ts";
 import { Router } from "./router.ts";
 
 async function assert200(router: Router, request: Request, body: string) {
@@ -15,14 +14,9 @@ async function assert401(router: Router, request: Request, body: string) {
 }
 
 async function assert404(router: Router, request: Request) {
-  try {
-    await router.dispatch(request);
-    fail();
-  } catch (e) {
-    assertInstanceOf(e, ServerError);
-    assertEquals(e.status, 404);
-    assertEquals(e.message, "Not Found");
-  }
+  const response = await router.dispatch(request);
+  assertEquals(response.status, 404);
+  assertEquals(await response.text(), "Not Found");
 }
 
 Deno.test("router, empty", async () => {
@@ -198,12 +192,15 @@ Deno.test("router, middleware", async () => {
   router.addRoute({
     method: ["GET"],
     pattern: new URLPattern({ pathname: "/" }),
-  }, ({ request }, next) => {
-    const auth = request.headers.get("Authorization");
-    if (!auth) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    return next();
+    middleware: [
+      ({ request }, next) => {
+        const auth = request.headers.get("Authorization");
+        if (!auth) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        return next();
+      },
+    ],
   }, () => new Response("pong", { status: 200 }));
 
   router.addRoute({

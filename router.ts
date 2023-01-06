@@ -1,4 +1,11 @@
+import { RouteNotFoundError } from "./error/route_not_found_error.ts";
 import { ServerError } from "./error/server_error.ts";
+
+export type ErrorHandler = (error: unknown) => Response | Promise<Response>;
+
+export interface RouterOptions {
+  errorHandler?: ErrorHandler;
+}
 
 export interface Context {
   match: URLPatternResult;
@@ -15,7 +22,7 @@ export type MiddlewareNextHandler = (
 
 export type MiddlewareHandler = (
   ctx: Context,
-  next?: MiddlewareNextHandler,
+  next: MiddlewareNextHandler,
 ) => Response | Promise<Response>;
 
 export interface RouteParams {
@@ -30,24 +37,28 @@ export interface GroupParams {
   middleware?: MiddlewareHandler | MiddlewareHandler[] | null;
 }
 
-interface InternalGroup {
+/** @internal */
+interface Group {
   prefix: string;
   domains: string[];
   middlewares: MiddlewareHandler[];
 }
 
+/** @internal */
 function normalizePath(path: string) {
   return "/" + path.replace(/^\/+|\/+$/g, "");
 }
 
+/** @internal */
 function joinPath(path: string, otherPath: string) {
   return normalizePath(
     path.replace(/\/+$/g, "") + "/" + otherPath.replace(/^\/+/g, ""),
   );
 }
 
+/** @internal */
 function normalizePatterns(
-  group: InternalGroup | null,
+  group: Group | null,
   pattern: PathPattern,
 ) {
   const prefix = group?.prefix ?? null;
@@ -89,13 +100,24 @@ function normalizePatterns(
   });
 }
 
-const allMethods = ["get", "head", "post", "put", "delete", "options", "patch"];
-const emptyRouteHandler = () => new Response();
+const ALL_METHOD = ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"];
+
+const defaultErrorHandler = (error: unknown) => {
+  if (error instanceof ServerError) {
+    return new Response(error.message, error.init);
+  }
+  if (error instanceof RouteNotFoundError) {
+    return new Response("Not Found", { status: 404 });
+  }
+  return new Response("Internal Server Error", {
+    status: 500,
+  });
+};
 
 export class Router {
-  groups: InternalGroup[] = [];
-  definedMiddlewares: MiddlewareHandler[] = [];
-  routes = new Map<
+  _groups: Group[] = [];
+  _definedMiddlewares: MiddlewareHandler[] = [];
+  _routes = new Map<
     string,
     [
       pattern: URLPattern,
@@ -104,8 +126,14 @@ export class Router {
     ][]
   >();
 
+  _errorHandler: ErrorHandler;
+
+  constructor(options: RouterOptions = {}) {
+    this._errorHandler = options.errorHandler ?? defaultErrorHandler;
+  }
+
   use(...middlewares: MiddlewareHandler[]) {
-    this.definedMiddlewares.push(...middlewares);
+    this._definedMiddlewares.push(...middlewares);
   }
 
   group({ domain, prefix, middleware }: GroupParams, handler: () => void) {
@@ -116,89 +144,69 @@ export class Router {
       ? (Array.isArray(middleware) ? middleware : [middleware])
       : [];
 
-    const lastGroup = this.groups.at(-1) ?? null;
-    const group: InternalGroup = {
+    const lastGroup = this._groups.at(-1) ?? null;
+    const group: Group = {
       domains: (lastGroup?.domains ?? []).concat(currentDomains),
       prefix: joinPath(lastGroup?.prefix ?? "", prefix ?? ""),
       middlewares: (lastGroup?.middlewares ?? []).concat(currentMiddlewares),
     };
-    this.groups.push(group);
+    this._groups.push(group);
     handler();
-    this.groups.pop();
+    this._groups.pop();
   }
 
-  get(path: string, fn: RouteHandler): void;
-  get(pattern: URLPatternInput, fn: RouteHandler): void;
-  get(pattern: URLPattern, fn: RouteHandler): void;
   get(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["get", "head"], pattern }, ...fns);
+    return this.addRoute({ method: ["GET", "HEAD"], pattern }, fn);
   }
 
-  head(path: string, fn: RouteHandler): void;
-  head(pattern: URLPatternInput, fn: RouteHandler): void;
-  head(pattern: URLPattern, fn: RouteHandler): void;
   head(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["head"], pattern }, ...fns);
+    return this.addRoute({ method: ["HEAD"], pattern }, fn);
   }
 
-  post(path: string, fn: RouteHandler): void;
-  post(pattern: URLPatternInput, fn: RouteHandler): void;
-  post(pattern: URLPattern, fn: RouteHandler): void;
   post(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["post"], pattern }, ...fns);
+    return this.addRoute({ method: ["POST"], pattern }, fn);
   }
 
-  put(path: string, fn: RouteHandler): void;
-  put(pattern: URLPatternInput, fn: RouteHandler): void;
-  put(pattern: URLPattern, fn: RouteHandler): void;
   put(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["put"], pattern }, ...fns);
+    return this.addRoute({ method: ["PUT"], pattern }, fn);
   }
 
-  del(path: string, fn: RouteHandler): void;
-  del(pattern: URLPatternInput, fn: RouteHandler): void;
-  del(pattern: URLPattern, fn: RouteHandler): void;
   del(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["delete"], pattern }, ...fns);
+    return this.addRoute({ method: ["DELETE"], pattern }, fn);
   }
 
-  options(path: string, fn: RouteHandler): void;
-  options(pattern: URLPatternInput, fn: RouteHandler): void;
-  options(pattern: URLPattern, fn: RouteHandler): void;
   options(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["options"], pattern }, ...fns);
+    return this.addRoute({ method: ["OPTIONS"], pattern }, fn);
   }
 
-  patch(path: string, fn: RouteHandler): void;
-  patch(pattern: URLPatternInput, fn: RouteHandler): void;
-  patch(pattern: URLPattern, fn: RouteHandler): void;
   patch(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: ["patch"], pattern }, ...fns);
+    return this.addRoute({ method: ["PATCH"], pattern }, fn);
   }
 
-  all(path: string, fn: RouteHandler): void;
-  all(pattern: URLPatternInput, fn: RouteHandler): void;
-  all(pattern: URLPattern, fn: RouteHandler): void;
   all(pattern: PathPattern, fn: RouteHandler) {
-    this.addRoute({ method: allMethods, pattern }, ...fns);
+    return this.addRoute({ method: ALL_METHOD, pattern }, fn);
   }
 
   addRoute(route: RouteParams, fn: RouteHandler) {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
-    const middlewares = fns.slice(0, -1);
+    const middlewares = route.middleware
+      ? (Array.isArray(route.middleware)
+        ? route.middleware
+        : [route.middleware])
+      : [];
 
     for (let method of methods) {
-      method = method.trim().toLowerCase();
-      let routeGroup = this.routes.get(method);
+      method = method.trim().toUpperCase();
+      let routeGroup = this._routes.get(method);
       if (!routeGroup) {
         routeGroup = [];
-        this.routes.set(method, routeGroup);
+        this._routes.set(method, routeGroup);
       }
 
-      const group = this.groups.at(-1) ?? null;
+      const group = this._groups.at(-1) ?? null;
       for (const pattern of normalizePatterns(group, route.pattern)) {
         routeGroup.push([pattern, fn, [
-          ...this.definedMiddlewares,
+          ...this._definedMiddlewares,
           ...group?.middlewares ?? [],
           ...middlewares,
         ]]);
@@ -221,13 +229,17 @@ export class Router {
       });
     }
 
-    const routes = this.routes.get(request.method.toLowerCase()) ?? [];
-    for (const [pattern, fn, middlewares] of routes) {
-      const match = pattern.exec(request.url);
-      if (match) {
-        return await execute(middlewares, fn, { match, request });
+    try {
+      const routes = this._routes.get(request.method.toUpperCase()) ?? [];
+      for (const [pattern, fn, middlewares] of routes) {
+        const match = pattern.exec(request.url);
+        if (match) {
+          return await execute(middlewares, fn, { match, request });
+        }
       }
+      throw new RouteNotFoundError("Not Found");
+    } catch (e: unknown) {
+      return await this._errorHandler(e);
     }
-    throw new ServerError("Not Found", 404);
   }
 }
