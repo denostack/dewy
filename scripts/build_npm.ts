@@ -13,10 +13,22 @@ console.log(bgGreen(`version: ${version}`));
 await emptyDir("./.npm");
 
 await build({
-  entryPoints: ["./mod.ts"],
+  entryPoints: [
+    "./mod.ts",
+    "./middlewares/cors.ts",
+  ],
   outDir: "./.npm",
   shims: {
     deno: false,
+    custom: [
+      {
+        module: "./nodejs/urlpattern.shim.ts",
+        globalNames: [
+          "URLPattern",
+          { name: "URLPatternInput", typeOnly: true },
+        ],
+      },
+    ],
   },
   test: false,
   compilerOptions: {
@@ -36,6 +48,9 @@ await build({
     },
     bugs: {
       url: "https://github.com/denostack/purehttp/issues",
+    },
+    dependencies: {
+      "urlpattern-polyfill": "~6.0.0",
     },
   },
 });
