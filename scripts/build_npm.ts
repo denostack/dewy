@@ -32,22 +32,28 @@ await build({
   },
   test: false,
   compilerOptions: {
-    lib: ["es2021", "dom"],
+    lib: ["es2022", "dom"],
   },
   package: {
-    name: "purehttp",
+    name: "dewy",
     version,
-    description: "",
+    description:
+      "Dewy(dǝw-y) is a minimalist HTTP server framework with a small codebase, utilizing built-in URLPattern for efficient routing.",
     keywords: [
       "http server",
+      "web",
+      "http",
+      "restful",
+      "router",
+      "urlpattern",
     ],
     license: "MIT",
     repository: {
       type: "git",
-      url: "git+https://github.com/denostack/purehttp.git",
+      url: "git+https://github.com/denostack/dewy.git",
     },
     bugs: {
-      url: "https://github.com/denostack/purehttp/issues",
+      url: "https://github.com/denostack/dewy/issues",
     },
     dependencies: {
       "urlpattern-polyfill": "~6.0.0",
